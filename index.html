@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+pri<!DOCTYPE html>
 <html lang="cs">
 <head>
   <meta charset="UTF-8">
@@ -130,15 +130,39 @@
     a:hover::after {
       width: 100%;
     }
+
+            .dante-button {
+            padding: 12px 24px;
+            background: #2ab397;
+            border: 2px solid #2ab397;
+            color: white;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .dante-button:hover {
+            background: transparent;
+            color: #2ab397;
+        }
   </style>
 </head>
 <body>
   <div class="container">
     <h1 class="glitch" data-text="Stránka funguje.">Stránka funguje.</h1>
     <p class="subtitle">[ system online ]</p>
+                <button onclick="showPopup()" class="dante-button">Click me</button>
   </div>
   <footer>
     <p>Vytvořil <a href="https://discord.gg/dynastycz" target="_blank">⧖ .boxik ⧖</a></p>
   </footer>
+
+      <script>
+        function showPopup() {
+            alert('Dante kys kys kys');
+        }
+    </script>
 </body>
 </html>
