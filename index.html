@@ -135,6 +135,7 @@ pri<!DOCTYPE html>
             padding: 12px 24px;
             background: #2ab397;
             border: 2px solid #2ab397;
+                          border-radius: 25px;
             color: white;
             font-family: 'Courier New', monospace;
             font-size: 14px;
@@ -146,6 +147,68 @@ pri<!DOCTYPE html>
         .dante-button:hover {
             background: transparent;
             color: #2ab397;
+        }
+
+            /* Modal styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-overlay.show {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #1a1a2e;
+            border: 2px solid #2ab397;
+            border-radius: 15px;
+            padding: 30px 40px;
+            max-width: 400px;
+            text-align: center;
+            animation: modalFadeIn 0.3s ease;
+        }
+        
+        .modal-text {
+            color: #2ab397;
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+        
+        .modal-close {
+            background: #2ab397;
+            border: 2px solid #2ab397;
+            border-radius: 20px;
+            color: white;
+            padding: 10px 20px;
+            font-family: 'Courier New', monospace;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .modal-close:hover {
+            background: transparent;
+            color: #2ab397;
+        }
+        
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
   </style>
 </head>
@@ -161,7 +224,10 @@ pri<!DOCTYPE html>
 
       <script>
         function showPopup() {
-            alert('Dante kys kys kys');
+            document.getElementById('danteModal').classList.add('show');        }
+
+                function closeModal() {
+            document.getElementById('danteModal').classList.remove('show');
         }
     </script>
 </body>
