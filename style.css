@@ -139,3 +139,56 @@ h1 {
     );
     border-top: 4px solid #1a6b1a;
 }
+
+/* Join button */
+.join-button {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 12px 24px;
+    background: #5865f2;
+    color: white;
+    text-decoration: none;
+    font-size: 0.6em;
+    border: 4px solid #4752c4;
+    box-shadow: 
+        0 4px 0 #4752c4,
+        0 8px 0 #3c44a8;
+    transition: transform 0.1s, box-shadow 0.1s;
+    cursor: pointer;
+}
+
+.join-button:hover {
+    transform: translateY(2px);
+    box-shadow: 
+        0 2px 0 #4752c4,
+        0 4px 0 #3c44a8;
+    background: #4752c4;
+}
+
+.join-button:active {
+    transform: translateY(4px);
+    box-shadow: none;
+}
+
+/* Creator link at bottom */
+.creator-link {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    color: #ffff00;
+    text-decoration: none;
+    font-size: 0.5em;
+    z-index: 100;
+    text-shadow: 
+        2px 2px 0 #000,
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000;
+    transition: transform 0.2s;
+}
+
+.creator-link:hover {
+    color: #90ee90;
+    transform: scale(1.2);
+}
