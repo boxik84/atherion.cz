@@ -1,0 +1,15 @@
+{
+  "name": "Atherion Coach – live tep",
+  "short_name": "Coach",
+  "description": "Live tep, zóny a výkon celej skupiny z Garmin HRM cez Bluetooth a ANT+.",
+  "lang": "sk",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0f17",
+  "theme_color": "#0b0f17",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

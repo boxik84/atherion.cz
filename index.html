@@ -1,28 +1,180 @@
 <!DOCTYPE html>
 <html lang="sk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Atherion - Minecraft Server</title>
-        <link rel="icon" type="image/png" href="https://media.discordapp.net/attachments/1417616079810728092/1441050147906781284/687qbal.png">
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Atherion Coach – live tep</title>
+  <meta name="description" content="Aplikácia pre trénerov: live tep, zóny, HRV, tempo a výkon z Garmin HRM cez Bluetooth alebo ANT+.">
+  <meta name="theme-color" content="#0b0f17">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
 </head>
 <body>
-    <div class="clouds">
-        <div class="cloud"></div>
-        <div class="cloud"></div>
-        <div class="cloud"></div>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.5.8-1.3 2.3-2.5 4.4-2.5 3.6 0 5.7 3.7 4.2 7.2C19.5 16.4 12 21 12 21z" fill="currentColor"/><path d="M3 12h4l2-3 3 6 2-3h7" fill="none" stroke="#0b0f17" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
+      <span>Atherion <b>Coach</b></span>
     </div>
-    
-    <div class="container">
-                <img src="https://media.discordapp.net/attachments/1417616079810728092/1441050147906781284/687qbal.png" alt="Atherion Logo" class="logo">
-        <h1>ATHERION</h1>
-        <div class="subtitle">Minecraft Survival</div>
-                <a href="https://discord.gg/FXBSrpPJhF" target="_blank" class="join-button">Připojit se</a>
+
+    <div class="session" id="session">
+      <span class="session-time" id="session-time">00:00</span>
+      <span class="session-lap" id="session-lap" hidden></span>
+      <button class="btn btn-primary" id="btn-start" title="Spustiť tréning">▶ Štart</button>
+      <button class="btn" id="btn-lap" hidden title="Nové kolo / interval">⏱ Kolo</button>
+      <button class="btn btn-danger" id="btn-stop" hidden title="Ukončiť tréning">■ Stop</button>
     </div>
-    
-    <div class="easter-egg"></div>
-    <div class="grass"></div>
-        <a href="https://discord.gg/dynastycz" target="_blank" class="creator-link">.boxik</a>
+
+    <nav class="connect">
+      <button class="btn" id="btn-ble" title="Pripojiť Garmin HRM alebo hodinky cez Bluetooth">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Bluetooth
+      </button>
+      <button class="btn" id="btn-ant" title="Pripojiť Garmin USB ANT+ stick – zachytí všetky pásy v dosahu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12a7 7 0 0 1 14 0M8.5 12a3.5 3.5 0 0 1 7 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 14v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span id="ant-label">ANT+ USB</span>
+      </button>
+      <button class="btn btn-ghost" id="btn-demo" title="Simulované dáta bez hardvéru">Demo</button>
+      <button class="btn btn-icon btn-ghost" id="btn-athletes" title="Športovci">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M17 14c2.5 0 4 1.8 4 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <button class="btn btn-icon btn-ghost" id="btn-fullscreen" title="Celá obrazovka">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main>
+    <div class="toolbar">
+      <span class="count" id="count">Žiadne senzory</span>
+      <label class="field-inline">Zoradiť
+        <select id="sort">
+          <option value="name">podľa mena</option>
+          <option value="hr">podľa tepu</option>
+          <option value="zone">podľa intenzity</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="only-assigned"> iba priradení športovci</label>
+      <label class="check"><input type="checkbox" id="sound"> zvukové upozornenie</label>
+    </div>
+
+    <section class="grid" id="grid" aria-live="polite"></section>
+
+    <section class="empty" id="empty">
+      <h1>Live tep celej skupiny na jednej obrazovke</h1>
+      <p class="lead">Pripojte Garmin HRM pás (HRM 600, HRM-Pro, HRM-Pro Plus, HRM-Dual, HRM-Fit, HRM 200…), Garmin hodinky alebo akýkoľvek pás so štandardným Bluetooth / ANT+ protokolom.</p>
+      <div class="howto">
+        <article>
+          <h2><span class="step">1</span> Bluetooth</h2>
+          <p>Navlhčite elektródy a nasaďte pás. Kliknite na <b>Bluetooth</b> a vyberte <i>HRM-Pro:xxxxx</i>. Pre ďalšieho športovca kliknite znova.</p>
+          <p class="hint">HRM 600 zvládne naraz 3 Bluetooth spojenia, HRM-Pro a HRM-Dual 2 – hodinky športovca môžu ostať pripojené.</p>
+        </article>
+        <article>
+          <h2><span class="step">2</span> ANT+ (Garmin USB stick)</h2>
+          <p>Zasuňte Garmin USB ANT stick a kliknite na <b>ANT+ USB</b>. Aplikácia zachytí <b>všetky</b> ANT+ pásy, foot pody a wattmetre v dosahu naraz – bez párovania.</p>
+          <p class="hint">Windows: najprv priraďte sticku ovládač WinUSB (napr. cez Zadig).</p>
+        </article>
+        <article>
+          <h2><span class="step">3</span> Garmin hodinky</h2>
+          <p>Na hodinkách zapnite <i>Vysielanie srdcového tepu</i> (Broadcast Heart Rate). Hodinky sa potom správajú ako pás – cez Bluetooth aj ANT+.</p>
+          <p class="hint">Nemáte hardvér? Skúste <b>Demo</b>.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <div>
+        <h2 id="d-title">–</h2>
+        <div class="muted" id="d-sub"></div>
+      </div>
+      <button class="btn btn-icon btn-ghost" id="d-close" title="Zavrieť">✕</button>
+    </div>
+    <div class="drawer-hr">
+      <span class="d-hr" id="d-hr">–</span><span class="unit">bpm</span>
+      <span class="d-zone" id="d-zone"></span>
+    </div>
+    <div class="seg" id="d-window">
+      <button data-w="300">5 min</button>
+      <button data-w="900" class="active">15 min</button>
+      <button data-w="3600">60 min</button>
+    </div>
+    <canvas class="d-chart" id="d-chart"></canvas>
+    <div class="stats" id="d-stats"></div>
+    <h3>Čas v zónach</h3>
+    <div class="zones" id="d-zones"></div>
+    <h3>Senzory</h3>
+    <ul class="sensor-list" id="d-sensors"></ul>
+    <label class="field">Priradiť športovcovi
+      <select id="d-assign"></select>
+    </label>
+  </aside>
+
+  <dialog id="athletes-dialog">
+    <form method="dialog" class="dialog">
+      <div class="dialog-head">
+        <h2>Športovci</h2>
+        <button class="btn btn-icon btn-ghost" value="close" title="Zavrieť">✕</button>
+      </div>
+      <p class="muted">Max. tep a vek určujú zóny. Ak zadáte aj pokojový tep, zóny sa počítajú z rezervy srdcovej frekvencie (Karvonen). Hmotnosť a pohlavie spresňujú kalórie.</p>
+      <div class="table-wrap">
+        <table class="athletes">
+          <thead><tr><th>Meno</th><th>Vek</th><th>Pohl.</th><th>Váha</th><th>Max</th><th>Pokoj</th><th>Senzor</th><th></th></tr></thead>
+          <tbody id="athletes-body"></tbody>
+        </table>
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="btn" id="btn-add-athlete">+ Pridať športovca</button>
+        <button class="btn btn-primary" value="close">Hotovo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="summary-dialog">
+    <form method="dialog" class="dialog dialog-wide">
+      <div class="dialog-head">
+        <h2>Súhrn tréningu</h2>
+        <button class="btn btn-icon btn-ghost" value="close" title="Zavrieť">✕</button>
+      </div>
+      <div class="muted" id="summary-meta"></div>
+      <div class="table-wrap">
+        <table class="summary">
+          <thead><tr><th>Športovec</th><th>Trvanie</th><th>Ø tep</th><th>Max</th><th>kcal</th><th>Vzdial.</th><th>Zóny</th><th>Export</th></tr></thead>
+          <tbody id="summary-body"></tbody>
+        </table>
+      </div>
+      <div id="summary-laps"></div>
+      <div class="dialog-foot">
+        <button type="button" class="btn" id="btn-csv">⬇ CSV (všetci)</button>
+        <button class="btn btn-primary" value="close">Zavrieť</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts"></div>
+
+  <template id="tile-tpl">
+    <article class="tile" tabindex="0">
+      <div class="tile-head">
+        <span class="tile-name"></span>
+        <span class="tile-meta">
+          <span class="badge src"></span>
+          <span class="battery" hidden></span>
+          <span class="dot"></span>
+        </span>
+      </div>
+      <div class="tile-main">
+        <div class="hr"><span class="hr-val">–</span><span class="unit">bpm</span></div>
+        <div class="pct"><span class="pct-val">–</span><span class="zone-name"></span></div>
+      </div>
+      <canvas class="spark"></canvas>
+      <div class="tile-stats"></div>
+      <div class="zonebar"></div>
+    </article>
+  </template>
 </body>
 </html>
