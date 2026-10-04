@@ -224,9 +224,9 @@ input[type="checkbox"] { min-height: 0; width: 18px; height: 18px; accent-color:
 .option.ant .ico { color: #34d399; }
 .option.relay .ico { color: #fbbf24; }
 .option.demo .ico { color: #c084fc; }
-.option b { font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.option b { font-size: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .option small { color: var(--muted); font-size: 13px; line-height: 1.4; }
-.option .state { font-size: 11px; font-weight: 700; color: var(--ok); }
+.option .state { font-size: 11px; font-weight: 700; color: var(--ok); white-space: nowrap; }
 
 /* ---------- drawer ---------- */
 .scrim { position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, .35); }
@@ -278,6 +278,11 @@ dialog::backdrop { background: rgba(5, 8, 14, .6); backdrop-filter: blur(3px); }
 .dialog p { margin: 0; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-row .field { margin-top: 0; }
+.conn-status { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); }
+.conn-status i { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; background: var(--warn); flex: none; animation: blink 1.2s steps(2) infinite; }
+.conn-status.ok i { background: var(--ok); animation: none; }
+.conn-status.bad i { background: var(--bad); }
+.conn-status small { display: block; color: var(--muted); margin-top: 2px; }
 .form-error { color: var(--bad); font-weight: 600; font-size: 14px; }
 .input-btn { display: flex; gap: 6px; }
 .input-btn input { font: 700 18px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 3px; }

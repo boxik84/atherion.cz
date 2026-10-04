@@ -1,5 +1,5 @@
 // Offline cache – the app keeps working in a gym without internet.
-const CACHE = 'coach-v2';
+const CACHE = 'coach-v3';
 const ASSETS = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest', 'icons/icon.svg',
   'js/app.js', 'js/ble.js', 'js/ant.js', 'js/demo.js', 'js/chart.js', 'js/export.js', 'js/metrics.js', 'js/parsers.js', 'js/relay.js',
