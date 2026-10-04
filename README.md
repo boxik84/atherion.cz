@@ -38,12 +38,13 @@ Nič sa neinštaluje a nie je potrebný server: stačí otvoriť stránku v Chro
 
 ## Zdieľanie z mobilu na PC – ako to funguje
 
-- Dáta idú **priamo z mobilu do PC** cez WebRTC a sú šifrované (DTLS). Verejný server PeerJS slúži iba na to, aby sa zariadenia našli. Ak priame spojenie nejde, prenos sprostredkuje TURN server PeerJS, ktorý vidí iba šifrované dáta.
+- Dáta idú prednostne **priamo z mobilu do PC** cez WebRTC a sú šifrované (DTLS). Verejný server PeerJS slúži iba na to, aby sa zariadenia našli.
+- **Záloha:** keď sieť nepustí priame spojenie (typicky mobilné dáta), dáta idú cez verejný MQTT server (broker.emqx.io, broker.hivemq.com). Sú pritom **šifrované end-to-end** kľúčom z hesla (AES-256-GCM). Názov kanála je tiež odvodený z hesla, takže server vidí iba náhodné bajty. Mobil posiela dáta týmto spôsobom iba vtedy, keď si ich PC vyžiada, a raz za sekundu.
 - **Heslo sa nikdy neposiela.** Mobil aj PC z hesla a kódu miestnosti odvodia kľúč (PBKDF2-SHA256, 150 000 iterácií) a PC dokazuje jeho znalosť odpoveďou na náhodnú výzvu (HMAC). Bez správneho hesla PC nedostane žiadne dáta. Dôkaz je obojstranný: aj mobil sa preukáže PC.
 - Po 5 zlých heslách za minútu mobil na 1 minútu zablokuje všetky nové pripojenia.
 - K jednému mobilu sa môže pripojiť viac PC, tabletov alebo TV naraz. Mena športovcov nastavené na mobile sa zobrazia aj na PC.
 - Mobil musí mať stránku otvorenú a obrazovku zapnutú. Keď prehliadač prejde do pozadia, mobil môže prestať posielať dáta.
-- Pri lokálnom testovaní sa dá použiť vlastný signalizačný server: `?peerhost=127.0.0.1:9000`.
+- Pri lokálnom testovaní sa dá použiť vlastný signalizačný server `?peerhost=127.0.0.1:9000` a MQTT broker `?mqtt=ws://127.0.0.1:8888`.
 
 ## Spustenie
 
@@ -69,7 +70,8 @@ js/metrics.js         zóny, Karvonen, RMSSD, kalórie (Keytel)
 js/chart.js           canvas grafy
 js/export.js          CSV a TCX export
 js/demo.js            simulované senzory
-js/relay.js           zdieľanie mobil → PC (PeerJS/WebRTC, overenie heslom)
+js/relay.js           zdieľanie mobil → PC (PeerJS/WebRTC, overenie heslom, šifrovaná MQTT záloha)
+js/mqtt.js            minimálny MQTT klient cez WebSocket
 vendor/               PeerJS a QR generátor (MIT)
 sw.js                 offline cache
 tests/                node --test

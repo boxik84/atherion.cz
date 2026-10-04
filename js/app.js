@@ -200,6 +200,7 @@ const hub = new RelayHub({
   onLog: (msg, err) => toast(msg, err),
 });
 
+let lastViewerStatus = 'off';
 const viewer = new RelayViewer({
   onUpdate: onRelayUpdate,
   onAthletes: (list) => {
@@ -219,7 +220,11 @@ const viewer = new RelayViewer({
       dropSensors((s) => s.relay);
       state.remoteAthletes = [];
     }
-    if (info.status === 'online') toast(`Pripojené k mobilu ${info.room}`);
+    const live = (x) => x === 'online' || x === 'relay';
+    if (live(info.status) && !live(lastViewerStatus)) setTimeout(() => { if ($('#connect-dialog').open) $('#connect-dialog').close(); }, 1200);
+    if (info.status === 'online' && lastViewerStatus !== 'online') toast(`Pripojené k mobilu ${info.room}`);
+    if (info.status === 'relay' && lastViewerStatus !== 'relay') toast(`Pripojené k mobilu ${info.room} cez záložný server`);
+    lastViewerStatus = info.status;
     if (info.error) {
       showViewerError(info.error);
       if (info.denied) { state.viewer.password = ''; store.save('coach.viewer', state.viewer); }
@@ -569,9 +574,10 @@ const VIEWER_STATUS = {
   connecting: ['pripájam sa…', 'Pripájam sa na server, cez ktorý sa PC nájde s mobilom.'],
   dialing: ['hľadám mobil…', 'Server našiel mobil, nadväzujem priame spojenie.'],
   auth: ['overujem heslo…', 'Spojenie s mobilom je nadviazané, overujem heslo.'],
-  online: ['online', 'Dáta z mobilu prichádzajú.'],
+  online: ['online', 'Dáta z mobilu prichádzajú priamo.'],
+  relay: ['online cez server', 'Priame spojenie sieť nepustila, dáta preto idú cez záložný server – šifrované heslom, server ich nevie prečítať. Oneskorenie asi 1 s.'],
   waiting: ['čakám na mobil', 'Mobil s týmto kódom práve nezdieľa. Je na ňom otvorená stránka a zapnuté Zdieľať? Skúšam znova…'],
-  failed: ['zlyhalo, skúšam znova', 'Mobil aj PC sú online, ale sieť nepustila priame spojenie. Pomôže dať mobil aj PC na rovnakú Wi-Fi alebo vypnúť VPN. Skúšam znova…'],
+  failed: ['zlyhalo, skúšam znova', 'Priame spojenie sa nepodarilo a ani cez záložný server zatiaľ neprišli dáta. Skontrolujte, či kód a heslo sedia s mobilom a či je na mobile stránka otvorená v popredí. Skúšam znova…'],
 };
 
 function viewerStatusText() {
@@ -597,9 +603,9 @@ function renderSources() {
   if (nBle) add('i-bt', `Bluetooth ${nBle}`, '', openConnect);
   if (ant.connected) add('i-ant', 'ANT+ skenuje', '', openConnect);
   if (demo.running) add('i-play', 'Demo', '', openConnect);
-  if (viewer.active) add('i-phone', `Mobil ${viewer.room} · ${viewerStatusText()}`, viewer.status === 'online' ? '' : 'wait', () => openConnect('relay'));
+  if (viewer.active) add('i-phone', `Mobil ${viewer.room} · ${viewerStatusText()}`, viewer.status === 'online' || viewer.status === 'relay' ? '' : 'wait', () => openConnect('relay'));
   if (hub.active) {
-    const txt = hub.status === 'online' ? `Zdieľanie ${hub.room} · ${hub.viewers.size} PC` : `Zdieľanie ${hub.room} · pripájam…`;
+    const txt = hub.status === 'online' ? `Zdieľanie ${hub.room} · ${hub.viewerCount} PC` : `Zdieľanie ${hub.room} · pripájam…`;
     add('i-share', txt, hub.status === 'online' ? '' : 'wait', openShare);
   }
 
@@ -607,7 +613,7 @@ function renderSources() {
   shareBtn.classList.toggle('on', hub.active);
   const pill = $('#share-pill');
   pill.hidden = !hub.active;
-  pill.textContent = hub.viewers.size;
+  pill.textContent = hub.viewerCount;
   updateWakeLock();
 }
 
@@ -659,8 +665,9 @@ function openConnect(focus) {
 function renderViewerForm() {
   const active = viewer.active;
   $('#v-stop').hidden = !active;
-  $('#v-connect').textContent = active ? (viewer.status === 'online' ? 'Pripojené ✓' : 'Pripájam…') : 'Pripojiť k mobilu';
-  $('#v-stop').textContent = viewer.status === 'online' ? 'Odpojiť od mobilu' : 'Zrušiť';
+  const live = viewer.status === 'online' || viewer.status === 'relay';
+  $('#v-connect').textContent = active ? (live ? 'Pripojené ✓' : 'Pripájam…') : 'Pripojiť k mobilu';
+  $('#v-stop').textContent = live ? 'Odpojiť od mobilu' : 'Zrušiť';
   $('#v-connect').disabled = active;
   $('#v-room').disabled = active;
   $('#v-pass').disabled = active;
@@ -669,7 +676,7 @@ function renderViewerForm() {
   const info = VIEWER_STATUS[viewer.status];
   st.hidden = !info;
   if (info) {
-    st.className = `conn-status ${viewer.status === 'online' ? 'ok' : viewer.status === 'failed' ? 'bad' : ''}`;
+    st.className = `conn-status ${viewer.status === 'online' || viewer.status === 'relay' ? 'ok' : viewer.status === 'failed' ? 'bad' : ''}`;
     const title = viewer.status === 'failed' ? 'Spojenie zlyhalo' : info[0];
     $('b', st).textContent = title[0].toUpperCase() + title.slice(1);
     $('small', st).textContent = viewer.status === 'failed' && viewer.failures > 1
@@ -746,7 +753,7 @@ function renderShare() {
     st.className = `share-status ${hub.status === 'online' ? '' : 'wait'}`;
     st.innerHTML = '<i></i><span></span>';
     $('span', st).textContent = hub.status === 'online'
-      ? `Online · pripojené PC: ${hub.viewers.size}`
+      ? `Online · pripojené PC: ${hub.viewerCount}`
       : hub.status === 'reconnecting' ? 'Spojenie so serverom stratené, obnovujem…' : 'Pripájam…';
     const qr = $('#s-qr');
     if (qr.dataset.link !== link) { qr.dataset.link = link; renderQr(qr, link); }
@@ -1261,7 +1268,7 @@ function init() {
 
   document.addEventListener('visibilitychange', updateWakeLock);
   window.addEventListener('beforeunload', (e) => {
-    if (state.session.state !== 'idle' || hub.viewers.size) { e.preventDefault(); e.returnValue = ''; }
+    if (state.session.state !== 'idle' || hub.viewerCount) { e.preventDefault(); e.returnValue = ''; }
   });
   window.addEventListener('resize', () => render(true));
 
