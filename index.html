@@ -4,44 +4,53 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Atherion Coach – live tep</title>
-  <meta name="description" content="Aplikácia pre trénerov: live tep, zóny, HRV, tempo a výkon z Garmin HRM cez Bluetooth alebo ANT+.">
+  <meta name="description" content="Aplikácia pre trénerov: live tep, zóny, HRV, tempo a výkon z Garmin HRM cez Bluetooth, ANT+ alebo z mobilu.">
   <meta name="theme-color" content="#0b0f17">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="css/app.css">
+  <script>
+    try { const t = JSON.parse(localStorage.getItem('coach.options') || '{}').theme; if (t && t !== 'auto') document.documentElement.dataset.theme = t; } catch {}
+  </script>
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.5.8-1.3 2.3-2.5 4.4-2.5 3.6 0 5.7 3.7 4.2 7.2C19.5 16.4 12 21 12 21z" fill="currentColor"/></symbol>
+    <symbol id="i-bt" viewBox="0 0 24 24"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-ant" viewBox="0 0 24 24"><path d="M5 12a7 7 0 0 1 14 0M8.5 12a3.5 3.5 0 0 1 7 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 14v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 18h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M9 11l3-3 3 3M12 8v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M17 14c2.5 0 4 1.8 4 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  </svg>
+
   <header class="topbar">
     <div class="brand">
-      <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.5.8-1.3 2.3-2.5 4.4-2.5 3.6 0 5.7 3.7 4.2 7.2C19.5 16.4 12 21 12 21z" fill="currentColor"/><path d="M3 12h4l2-3 3 6 2-3h7" fill="none" stroke="#0b0f17" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
+      <svg class="brand-icon"><use href="#i-heart"/></svg>
       <span>Atherion <b>Coach</b></span>
     </div>
 
     <div class="session" id="session">
-      <span class="session-time" id="session-time">00:00</span>
-      <span class="session-lap" id="session-lap" hidden></span>
-      <button class="btn btn-primary" id="btn-start" title="Spustiť tréning">▶ Štart</button>
-      <button class="btn" id="btn-lap" hidden title="Nové kolo / interval">⏱ Kolo</button>
-      <button class="btn btn-danger" id="btn-stop" hidden title="Ukončiť tréning">■ Stop</button>
+      <div class="session-clock">
+        <span class="session-time" id="session-time">00:00</span>
+        <span class="session-lap" id="session-lap">tréning nebeží</span>
+      </div>
+      <button class="btn btn-go" id="btn-start" title="Spustiť tréning"><svg><use href="#i-play"/></svg><span>Štart</span></button>
+      <button class="btn" id="btn-lap" hidden title="Nové kolo / interval">Kolo</button>
+      <button class="btn btn-danger" id="btn-stop" hidden title="Ukončiť tréning">Stop</button>
     </div>
 
-    <nav class="connect">
-      <button class="btn" id="btn-ble" title="Pripojiť Garmin HRM alebo hodinky cez Bluetooth">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Bluetooth
-      </button>
-      <button class="btn" id="btn-ant" title="Pripojiť Garmin USB ANT+ stick – zachytí všetky pásy v dosahu">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12a7 7 0 0 1 14 0M8.5 12a3.5 3.5 0 0 1 7 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 14v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span id="ant-label">ANT+ USB</span>
-      </button>
-      <button class="btn btn-ghost" id="btn-demo" title="Simulované dáta bez hardvéru">Demo</button>
-      <button class="btn btn-icon btn-ghost" id="btn-athletes" title="Športovci">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="9" r="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M17 14c2.5 0 4 1.8 4 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-      </button>
-      <button class="btn btn-icon btn-ghost" id="btn-fullscreen" title="Celá obrazovka">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
+    <nav class="actions">
+      <button class="btn btn-primary" id="btn-connect" title="Pripojiť senzor"><svg><use href="#i-plus"/></svg><span>Pripojiť</span></button>
+      <button class="btn" id="btn-share" title="Zdieľať dáta na PC"><svg><use href="#i-share"/></svg><span class="lbl">Zdieľať</span><span class="pill" id="share-pill" hidden></span></button>
+      <button class="btn btn-icon btn-ghost" id="btn-athletes" title="Športovci"><svg><use href="#i-users"/></svg></button>
+      <button class="btn btn-icon btn-ghost" id="btn-settings" title="Nastavenia"><svg><use href="#i-gear"/></svg></button>
+      <button class="btn btn-icon btn-ghost hide-sm" id="btn-fullscreen" title="Celá obrazovka"><svg><use href="#i-full"/></svg></button>
     </nav>
   </header>
 
@@ -49,40 +58,29 @@
 
   <main>
     <div class="toolbar">
-      <span class="count" id="count">Žiadne senzory</span>
-      <label class="field-inline">Zoradiť
-        <select id="sort">
-          <option value="name">podľa mena</option>
-          <option value="hr">podľa tepu</option>
-          <option value="zone">podľa intenzity</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" id="only-assigned"> iba priradení športovci</label>
-      <label class="check"><input type="checkbox" id="sound"> zvukové upozornenie</label>
+      <div class="chips" id="chips"><span class="count" id="count">Žiadne senzory</span></div>
+      <div class="toolbar-right">
+        <div class="seg" id="sort-seg" role="group" aria-label="Zoradiť">
+          <button data-v="name">Meno</button>
+          <button data-v="hr">Tep</button>
+          <button data-v="zone">Intenzita</button>
+        </div>
+        <div class="seg" id="size-seg" role="group" aria-label="Veľkosť dlaždíc">
+          <button data-v="s" title="Malé dlaždice">S</button>
+          <button data-v="m" title="Stredné dlaždice">M</button>
+          <button data-v="l" title="Veľké dlaždice (TV)">L</button>
+        </div>
+      </div>
     </div>
 
     <section class="grid" id="grid" aria-live="polite"></section>
 
     <section class="empty" id="empty">
+      <div class="hero-heart"><svg><use href="#i-heart"/></svg></div>
       <h1>Live tep celej skupiny na jednej obrazovke</h1>
-      <p class="lead">Pripojte Garmin HRM pás (HRM 600, HRM-Pro, HRM-Pro Plus, HRM-Dual, HRM-Fit, HRM 200…), Garmin hodinky alebo akýkoľvek pás so štandardným Bluetooth / ANT+ protokolom.</p>
-      <div class="howto">
-        <article>
-          <h2><span class="step">1</span> Bluetooth</h2>
-          <p>Navlhčite elektródy a nasaďte pás. Kliknite na <b>Bluetooth</b> a vyberte <i>HRM-Pro:xxxxx</i>. Pre ďalšieho športovca kliknite znova.</p>
-          <p class="hint">HRM 600 zvládne naraz 3 Bluetooth spojenia, HRM-Pro a HRM-Dual 2 – hodinky športovca môžu ostať pripojené.</p>
-        </article>
-        <article>
-          <h2><span class="step">2</span> ANT+ (Garmin USB stick)</h2>
-          <p>Zasuňte Garmin USB ANT stick a kliknite na <b>ANT+ USB</b>. Aplikácia zachytí <b>všetky</b> ANT+ pásy, foot pody a wattmetre v dosahu naraz – bez párovania.</p>
-          <p class="hint">Windows: najprv priraďte sticku ovládač WinUSB (napr. cez Zadig).</p>
-        </article>
-        <article>
-          <h2><span class="step">3</span> Garmin hodinky</h2>
-          <p>Na hodinkách zapnite <i>Vysielanie srdcového tepu</i> (Broadcast Heart Rate). Hodinky sa potom správajú ako pás – cez Bluetooth aj ANT+.</p>
-          <p class="hint">Nemáte hardvér? Skúste <b>Demo</b>.</p>
-        </article>
-      </div>
+      <p class="lead">Garmin HRM 600, HRM-Pro, HRM-Dual, HRM-Fit, Garmin hodinky alebo akýkoľvek štandardný pás. Vyberte, ako sa má toto zariadenie pripojiť:</p>
+      <div class="options" id="empty-options"></div>
+      <p class="hint">Tip: na Garmin hodinkách zapnite <i>Vysielanie srdcového tepu</i> – hodinky sa potom správajú ako pás.</p>
     </section>
   </main>
 
@@ -95,9 +93,11 @@
       <button class="btn btn-icon btn-ghost" id="d-close" title="Zavrieť">✕</button>
     </div>
     <div class="drawer-hr">
+      <svg class="heart" id="d-heart"><use href="#i-heart"/></svg>
       <span class="d-hr" id="d-hr">–</span><span class="unit">bpm</span>
       <span class="d-zone" id="d-zone"></span>
     </div>
+    <div class="ibar" id="d-ibar"></div>
     <div class="seg" id="d-window">
       <button data-w="300">5 min</button>
       <button data-w="900" class="active">15 min</button>
@@ -113,20 +113,133 @@
       <select id="d-assign"></select>
     </label>
   </aside>
+  <div class="scrim" id="scrim" hidden></div>
 
-  <dialog id="athletes-dialog">
+  <!-- connect -->
+  <dialog id="connect-dialog">
     <form method="dialog" class="dialog">
+      <div class="dialog-head">
+        <h2>Pripojiť senzory</h2>
+        <button class="btn btn-icon btn-ghost" value="close" title="Zavrieť">✕</button>
+      </div>
+      <div class="options" id="connect-options"></div>
+
+      <div class="viewer-form" id="viewer-form" hidden>
+        <h3><svg><use href="#i-phone"/></svg> Prijímať dáta z mobilu</h3>
+        <p class="muted">Na mobile otvorte <b id="site-host">atherion.cz</b>, pripojte pásy a stlačte <b>Zdieľať</b>. Potom sem zadajte kód a heslo z mobilu.</p>
+        <div class="form-row">
+          <label class="field">Kód
+            <input id="v-room" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="napr. K7M2QX">
+          </label>
+          <label class="field">Heslo
+            <input id="v-pass" type="password" autocomplete="current-password" placeholder="heslo zo zdieľania">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="v-remember" checked> zapamätať na tomto počítači</label>
+        <div class="form-error" id="v-error" hidden></div>
+        <div class="dialog-foot">
+          <button type="button" class="btn btn-ghost" id="v-stop" hidden>Odpojiť od mobilu</button>
+          <button type="button" class="btn btn-primary" id="v-connect">Pripojiť k mobilu</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- share -->
+  <dialog id="share-dialog">
+    <form method="dialog" class="dialog">
+      <div class="dialog-head">
+        <h2>Zdieľať na PC</h2>
+        <button class="btn btn-icon btn-ghost" value="close" title="Zavrieť">✕</button>
+      </div>
+
+      <div id="share-off">
+        <p class="muted">Toto zariadenie (napr. mobil) bude posielať dáta zo všetkých pripojených pásov na počítač, tablet alebo TV – aj keď nemajú Bluetooth. Dáta idú priamo medzi zariadeniami, šifrovane.</p>
+        <div class="form-row">
+          <label class="field">Kód miestnosti
+            <div class="input-btn">
+              <input id="s-room" readonly>
+              <button type="button" class="btn" id="s-newroom" title="Vygenerovať nový kód">↻</button>
+            </div>
+          </label>
+          <label class="field">Heslo (min. 4 znaky)
+            <input id="s-pass" type="password" autocomplete="new-password" placeholder="zvoľte heslo">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="s-show"> zobraziť heslo</label>
+        <div class="form-error" id="s-error" hidden></div>
+        <div class="dialog-foot">
+          <span class="muted small"><svg class="inline"><use href="#i-lock"/></svg> Heslo sa nikdy neposiela cez internet.</span>
+          <button type="button" class="btn btn-primary" id="s-start">Spustiť zdieľanie</button>
+        </div>
+      </div>
+
+      <div id="share-on" hidden>
+        <div class="share-live">
+          <div class="qr" id="s-qr"></div>
+          <div class="share-info">
+            <div class="muted small">Kód</div>
+            <div class="room-code" id="s-code">––––––</div>
+            <div class="share-status" id="s-status"></div>
+            <p class="muted small">Na PC otvorte <b id="s-link-text"></b> alebo naskenujte QR kód a zadajte heslo.</p>
+            <button type="button" class="btn" id="s-copy">Kopírovať odkaz</button>
+          </div>
+        </div>
+        <p class="hint">Nechajte túto stránku otvorenú a obrazovku zapnutú – keď prehliadač prejde do pozadia, mobil môže prestať posielať dáta.</p>
+        <div class="dialog-foot">
+          <span></span>
+          <button type="button" class="btn btn-danger" id="s-stop">Zastaviť zdieľanie</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- settings -->
+  <dialog id="settings-dialog">
+    <form method="dialog" class="dialog dialog-narrow">
+      <div class="dialog-head">
+        <h2>Nastavenia</h2>
+        <button class="btn btn-icon btn-ghost" value="close" title="Zavrieť">✕</button>
+      </div>
+      <label class="field">Upozornenie pri intenzite nad
+        <select id="o-alert">
+          <option value="0.85">85 %</option>
+          <option value="0.9">90 %</option>
+          <option value="0.95">95 %</option>
+          <option value="1.01">vypnuté</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="o-sound"> zvukové upozornenie (pípnutie)</label>
+      <label class="check"><input type="checkbox" id="o-only"> zobraziť iba priradených športovcov</label>
+      <label class="field">Vzhľad
+        <select id="o-theme">
+          <option value="auto">podľa systému</option>
+          <option value="dark">tmavý</option>
+          <option value="light">svetlý</option>
+        </select>
+      </label>
+      <div class="dialog-foot">
+        <span class="muted small">Atherion Coach</span>
+        <button class="btn btn-primary" value="close">Hotovo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- athletes -->
+  <dialog id="athletes-dialog">
+    <form method="dialog" class="dialog dialog-wide">
       <div class="dialog-head">
         <h2>Športovci</h2>
         <button class="btn btn-icon btn-ghost" value="close" title="Zavrieť">✕</button>
       </div>
-      <p class="muted">Max. tep a vek určujú zóny. Ak zadáte aj pokojový tep, zóny sa počítajú z rezervy srdcovej frekvencie (Karvonen). Hmotnosť a pohlavie spresňujú kalórie.</p>
+      <p class="muted">Max. tep a vek určujú zóny. S pokojovým tepom sa zóny počítajú z rezervy srdcovej frekvencie (Karvonen). Hmotnosť a pohlavie spresňujú kalórie.</p>
       <div class="table-wrap">
         <table class="athletes">
-          <thead><tr><th>Meno</th><th>Vek</th><th>Pohl.</th><th>Váha</th><th>Max</th><th>Pokoj</th><th>Senzor</th><th></th></tr></thead>
+          <thead><tr><th>Meno</th><th>Vek</th><th>Pohl.</th><th>Váha</th><th>Max</th><th>Pokoj</th><th>Senzory</th><th></th></tr></thead>
           <tbody id="athletes-body"></tbody>
         </table>
       </div>
+      <div id="remote-athletes"></div>
       <div class="dialog-foot">
         <button type="button" class="btn" id="btn-add-athlete">+ Pridať športovca</button>
         <button class="btn btn-primary" value="close">Hotovo</button>
@@ -134,6 +247,7 @@
     </form>
   </dialog>
 
+  <!-- summary -->
   <dialog id="summary-dialog">
     <form method="dialog" class="dialog dialog-wide">
       <div class="dialog-head">
@@ -168,9 +282,13 @@
         </span>
       </div>
       <div class="tile-main">
-        <div class="hr"><span class="hr-val">–</span><span class="unit">bpm</span></div>
-        <div class="pct"><span class="pct-val">–</span><span class="zone-name"></span></div>
+        <div class="hr">
+          <svg class="heart"><use href="#i-heart"/></svg>
+          <span class="hr-val">–</span><span class="unit">bpm</span>
+        </div>
+        <div class="pct"><span class="pct-val"></span><span class="zone-name"></span></div>
       </div>
+      <div class="ibar"></div>
       <canvas class="spark"></canvas>
       <div class="tile-stats"></div>
       <div class="zonebar"></div>

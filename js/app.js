@@ -1,6 +1,7 @@
 import { BleManager } from './ble.js';
 import { AntManager } from './ant.js';
 import { DemoManager } from './demo.js';
+import { RelayHub, RelayViewer, randomRoom, normalizeRoom, loadScript } from './relay.js';
 import {
   ZONES, zoneOf, zoneColor, intensityOf, maxHrOf, rmssd, kcalPerMinute, formatDuration, formatPace,
 } from './metrics.js';
@@ -8,10 +9,11 @@ import { drawSparkline, drawHrChart } from './chart.js';
 import { exportCsv, exportTcx } from './export.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const STALE_MS = 5000;
 const LIVE_KEEP_MS = 60 * 60 * 1000;
-const ALERT_INTENSITY = 0.95;
 const SOURCE_LABEL = { ble: 'BT', ant: 'ANT+', demo: 'DEMO' };
+const RELAY_PREFIX = 'r:';
 
 /* ------------------------------------------------------------------ */
 /* persistence                                                          */
@@ -34,8 +36,15 @@ const store = {
 const state = {
   /** @type {{id:string,name:string,age?:number,sex?:'m'|'f',weight?:number,maxHr?:number,restHr?:number,sensorIds:string[]}[]} */
   athletes: store.load('coach.athletes', []),
+  /** athletes configured on the phone we receive data from (read-only here) */
+  remoteAthletes: [],
   sensorNames: store.load('coach.sensorNames', {}),
-  options: { sort: 'name', onlyAssigned: false, sound: false, ...store.load('coach.options', {}) },
+  options: {
+    sort: 'name', onlyAssigned: false, sound: false, size: 'm', theme: 'auto', alert: 0.95,
+    ...store.load('coach.options', {}),
+  },
+  share: { room: randomRoom(), password: '', active: false, ...store.load('coach.share', {}) },
+  viewer: { room: '', password: '', remember: true, ...store.load('coach.viewer', {}) },
   sensors: new Map(),       // sensorId -> sensor
   participants: new Map(),  // tile key -> participant
   hidden: new Set(),
@@ -44,18 +53,28 @@ const state = {
   detailWindow: 900,
 };
 
-const saveAthletes = () => store.save('coach.athletes', state.athletes);
 const saveOptions = () => store.save('coach.options', state.options);
+const saveShare = () => store.save('coach.share', state.share);
+function saveAthletes() {
+  store.save('coach.athletes', state.athletes);
+  hub.athletesChanged();
+}
 
+function allAthletes() {
+  return [...state.athletes, ...state.remoteAthletes];
+}
 function athleteOfSensor(sensorId) {
-  return state.athletes.find((a) => a.sensorIds?.includes(sensorId)) || null;
+  // local assignment wins over the one coming from the phone
+  return state.athletes.find((a) => a.sensorIds?.includes(sensorId))
+    || state.remoteAthletes.find((a) => a.sensorIds.includes(sensorId))
+    || null;
 }
 function keyOf(sensorId) {
   const a = athleteOfSensor(sensorId);
   return a ? `ath:${a.id}` : `sen:${sensorId}`;
 }
 function athleteOfKey(key) {
-  return key.startsWith('ath:') ? state.athletes.find((a) => `ath:${a.id}` === key) || null : null;
+  return key.startsWith('ath:') ? allAthletes().find((a) => `ath:${a.id}` === key) || null : null;
 }
 function sensorsOfKey(key) {
   return [...state.sensors.values()].filter((s) => !state.hidden.has(s.id) && keyOf(s.id) === key);
@@ -72,8 +91,7 @@ function participant(key) {
 function labelOf(key) {
   const a = athleteOfKey(key);
   if (a) return a.name || 'Bez mena';
-  const id = key.slice(4);
-  return state.sensors.get(id)?.name || state.sensorNames[id] || id;
+  return sensorLabel(key.slice(4));
 }
 function sensorLabel(id) {
   return state.sensors.get(id)?.name || state.sensorNames[id] || id;
@@ -97,16 +115,28 @@ function liveValues(key, now = Date.now()) {
 /* sensor updates                                                       */
 /* ------------------------------------------------------------------ */
 
-function onUpdate(u) {
-  if (u.id === 'ant:stick') { renderAntButton(); return; }
+/** Updates from sensors attached to THIS device – also forwarded to PCs. */
+function onLocalUpdate(u) {
+  if (u.id === 'ant:stick') { renderSources(); if (u.status === 'disconnected') dropSensors((s) => s.source === 'ant'); return; }
+  hub.update(u);
+  applyUpdate(u);
+}
 
+/** Updates received from a phone. */
+function onRelayUpdate(u) {
+  if (!u || typeof u.id !== 'string' || u.id === 'ant:stick') return;
+  applyUpdate({ ...u, id: RELAY_PREFIX + u.id, relay: true });
+}
+
+function applyUpdate(u) {
   let s = state.sensors.get(u.id);
   if (!s) {
     if (u.status === 'disconnected') return;
-    s = { id: u.id, source: u.source, name: u.name || u.id, status: 'connected', values: {}, at: {}, lastSeen: 0 };
+    s = { id: u.id, source: u.source, relay: !!u.relay, name: u.name || u.id, status: 'connected', values: {}, at: {}, lastSeen: 0 };
     state.sensors.set(u.id, s);
+    updateWakeLock();
   }
-  if (u.name) {
+  if (typeof u.name === 'string' && u.name) {
     s.name = u.name;
     if (state.sensorNames[u.id] !== u.name) {
       state.sensorNames[u.id] = u.name;
@@ -122,31 +152,82 @@ function onUpdate(u) {
       scheduleRender();
       return;
     }
-    if (u.status === 'reconnecting') toast(`${s.name}: spojenie stratené, pripájam znova…`);
-    if (u.status === 'error') toast(`${s.name}: ${u.error}`, true);
+    if (!s.relay && u.status === 'reconnecting') toast(`${s.name}: spojenie stratené, pripájam znova…`);
+    if (!s.relay && u.status === 'error') toast(`${s.name}: ${u.error}`, true);
   }
 
   const now = Date.now();
   let gotData = false;
   for (const k of ['hr', 'speed', 'cadence', 'power']) {
-    if (u[k] != null) { s.values[k] = u[k]; s.at[k] = now; gotData = true; }
+    if (typeof u[k] === 'number' && Number.isFinite(u[k])) { s.values[k] = u[k]; s.at[k] = now; gotData = true; }
   }
   if (gotData) {
     s.lastSeen = now;
     if (s.status !== 'error') s.status = 'connected';
   }
-  if (u.rr?.length) {
+  if (Array.isArray(u.rr) && u.rr.length) {
     const p = participant(keyOf(u.id));
-    p.rr.push(...u.rr);
+    p.rr.push(...u.rr.filter((x) => typeof x === 'number'));
     if (p.rr.length > 300) p.rr.splice(0, p.rr.length - 300);
     p.rrAt = now;
   }
   scheduleRender();
 }
 
-const ble = new BleManager(onUpdate);
-const ant = new AntManager(onUpdate, (msg) => toast(msg));
-const demo = new DemoManager(onUpdate);
+function dropSensors(pred) {
+  for (const s of [...state.sensors.values()]) if (pred(s)) state.sensors.delete(s.id);
+  scheduleRender();
+}
+
+/** What a newly connected PC needs to see right away. */
+function snapshot() {
+  return [...state.sensors.values()].filter((s) => !s.relay).map((s) => ({
+    id: s.id, source: s.source, name: s.name, status: s.status, battery: s.battery,
+    batteryStatus: s.batteryStatus, manufacturer: s.manufacturer, model: s.model,
+  }));
+}
+
+const ble = new BleManager(onLocalUpdate);
+const ant = new AntManager(onLocalUpdate, (msg) => toast(msg));
+const demo = new DemoManager(onLocalUpdate);
+
+const hub = new RelayHub({
+  snapshot,
+  athletes: () => state.athletes.map(({ id, name, age, sex, weight, maxHr, restHr, sensorIds }) => ({
+    id, name, age, sex, weight, maxHr, restHr, sensorIds: (sensorIds || []).filter((x) => !x.startsWith(RELAY_PREFIX)),
+  })),
+  onChange: () => { renderSources(); renderShare(); },
+  onLog: (msg, err) => toast(msg, err),
+});
+
+const viewer = new RelayViewer({
+  onUpdate: onRelayUpdate,
+  onAthletes: (list) => {
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+    state.remoteAthletes = (Array.isArray(list) ? list : []).slice(0, 200).map((a) => ({
+      id: `r-${String(a.id)}`,
+      name: String(a.name || ''),
+      age: num(a.age), weight: num(a.weight), maxHr: num(a.maxHr), restHr: num(a.restHr),
+      sex: a.sex === 'f' ? 'f' : 'm',
+      sensorIds: (Array.isArray(a.sensorIds) ? a.sensorIds : []).map((x) => RELAY_PREFIX + x),
+      remote: true,
+    }));
+    render(true);
+  },
+  onChange: (info) => {
+    if (info.status === 'off') {
+      dropSensors((s) => s.relay);
+      state.remoteAthletes = [];
+    }
+    if (info.status === 'online') toast(`Pripojené k mobilu ${info.room}`);
+    if (info.error) {
+      showViewerError(info.error);
+      if (info.denied) { state.viewer.password = ''; store.save('coach.viewer', state.viewer); }
+    }
+    renderSources();
+    renderViewerForm();
+  },
+});
 
 /* ------------------------------------------------------------------ */
 /* session                                                              */
@@ -197,11 +278,9 @@ function stop() {
   const records = [];
   for (const p of state.participants.values()) {
     if (!p.sess || !p.sess.samples.length) { p.sess = null; continue; }
-    const athlete = athleteOfKey(p.key);
     records.push({
       key: p.key,
       label: labelOf(p.key),
-      athlete,
       samples: p.sess.samples,
       zoneSec: p.sess.zoneSec,
       kcal: p.sess.kcal,
@@ -310,6 +389,7 @@ function render(redrawCharts) {
       el = $('#tile-tpl').content.firstElementChild.cloneNode(true);
       el.addEventListener('click', () => openDrawer(el.dataset.key));
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter') openDrawer(el.dataset.key); });
+      $('.ibar', el).innerHTML = ZONES.map((z) => `<i style="background:${z.color}"></i>`).join('') + '<b hidden></b>';
       tiles.set(key, el);
     }
     el.dataset.key = key;
@@ -318,17 +398,48 @@ function render(redrawCharts) {
   });
 
   $('#empty').hidden = keys.length > 0 || state.sensors.size > 0;
+  $('.toolbar').hidden = !$('#empty').hidden;
   const n = state.sensors.size;
   $('#count').textContent = n === 0
     ? 'Žiadne senzory'
-    : `${keys.length} ${plural(keys.length, 'športovec', 'športovci', 'športovcov')} · ${n} ${plural(n, 'senzor', 'senzory', 'senzorov')}`;
-  $('#btn-demo').classList.toggle('on', demo.running);
+    : `${keys.length} ${plural(keys.length, 'športovec', 'športovci', 'športovcov')}`;
 
   if (state.selected) renderDrawer(redrawCharts);
 }
 
 function plural(n, one, few, many) {
   return n === 1 ? one : n >= 2 && n <= 4 ? few : many;
+}
+
+/** Position of the intensity marker on the 50–100 % bar. */
+function intensityBar(el, intensity) {
+  const marker = $('b', el);
+  const cells = $$('i', el);
+  if (intensity == null) {
+    marker.hidden = true;
+    cells.forEach((c) => c.classList.remove('on'));
+    return;
+  }
+  const pos = Math.min(1, Math.max(0, (intensity - 0.5) / 0.5));
+  marker.hidden = false;
+  marker.style.left = `${pos * 100}%`;
+  cells.forEach((c, i) => c.classList.toggle('on', intensity >= ZONES[i].from));
+}
+
+function setHeart(svg, hr) {
+  if (hr) {
+    svg.classList.add('beating');
+    svg.style.animationDuration = `${(60 / hr).toFixed(3)}s`;
+  } else {
+    svg.classList.remove('beating');
+  }
+}
+
+function sourceBadge(sensors) {
+  const sources = [...new Set(sensors.map((s) => s.source))];
+  const relay = sensors.some((s) => s.relay);
+  const text = sources.map((s) => SOURCE_LABEL[s] || s).join(' + ') || '—';
+  return { text: relay ? `${text} · mobil` : text, cls: relay ? 'relay' : sources[0] || '' };
 }
 
 function updateTile(el, key, now, redraw) {
@@ -345,28 +456,32 @@ function updateTile(el, key, now, redraw) {
   $('.hr-val', el).textContent = hr ?? '–';
   $('.pct-val', el).textContent = intensity != null ? `${Math.round(intensity * 100)} %` : '';
   $('.zone-name', el).textContent = zone ? ZONES[zone - 1].name : hr ? 'pod Z1' : '';
+  setHeart($('.heart', el), hr);
+  intensityBar($('.ibar', el), intensity);
 
-  const sources = [...new Set(sensors.map((s) => s.source))];
   const badge = $('.src', el);
-  badge.textContent = sources.map((s) => SOURCE_LABEL[s]).join(' + ') || '—';
-  badge.className = `badge src ${sources[0] || ''}`;
+  const b = sourceBadge(sensors);
+  badge.textContent = b.text;
+  badge.className = `badge src ${b.cls}`;
 
-  const batteries = sensors.map((s) => s.battery).filter((b) => b != null);
+  const batteries = sensors.map((s) => s.battery).filter((x) => x != null);
   const bat = $('.battery', el);
   bat.hidden = !batteries.length;
   if (batteries.length) {
-    const b = Math.min(...batteries);
-    bat.textContent = `🔋 ${b} %`;
-    bat.classList.toggle('low', b <= 20);
+    const min = Math.min(...batteries);
+    bat.textContent = `${min} %`;
+    bat.title = 'Batéria senzora';
+    bat.classList.toggle('low', min <= 20);
   }
 
   const connecting = sensors.some((s) => s.status === 'connecting' || s.status === 'reconnecting');
   const stale = hr == null && v.speed == null && v.power == null;
-  $('.dot', el).className = `dot ${connecting ? 'wait' : stale ? 'off' : 'live'}`;
-  $('.dot', el).title = connecting ? 'Pripája sa…' : stale ? 'Bez signálu' : 'Live';
+  const dot = $('.dot', el);
+  dot.className = `dot ${connecting ? 'wait' : stale ? 'off' : 'live'}`;
+  dot.title = connecting ? 'Pripája sa…' : stale ? 'Bez signálu' : 'Live';
   el.classList.toggle('stale', stale && !connecting);
 
-  const alert = intensity != null && intensity >= ALERT_INTENSITY;
+  const alert = intensity != null && intensity >= state.options.alert;
   el.classList.toggle('alert', alert);
   if (alert && p && state.options.sound && now - p.lastAlert > 4000) { p.lastAlert = now; beep(); }
 
@@ -390,7 +505,7 @@ function updateTile(el, key, now, redraw) {
   zb.hidden = !p?.sess?.hrN;
   if (p?.sess?.hrN) zb.innerHTML = zoneBarHtml(p.sess.zoneSec);
 
-  if (redraw && p) drawSparkline($('.spark', el), p.live, athlete);
+  if (redraw && p && state.options.size !== 's') drawSparkline($('.spark', el), p.live, athlete);
 }
 
 function zoneBarHtml(zoneSec) {
@@ -398,12 +513,261 @@ function zoneBarHtml(zoneSec) {
   return zoneSec.map((sec, z) => (sec ? `<i style="width:${(sec / total) * 100}%;background:${zoneColor(z)}" title="${z ? ZONES[z - 1].name : 'pod Z1'}: ${formatDuration(sec)}"></i>` : '')).join('');
 }
 
+/* ---------- sources: chips + connect options ---------- */
+
+function sourceOptions() {
+  const bleOk = BleManager.isSupported();
+  const usbOk = AntManager.isSupported();
+  const nBle = [...state.sensors.values()].filter((s) => s.source === 'ble' && !s.relay).length;
+  return [
+    {
+      id: 'ble', cls: 'bt', icon: 'i-bt', title: 'Bluetooth',
+      text: bleOk ? 'Garmin HRM 600, HRM-Pro, HRM-Dual, hodinky… Pre každý pás kliknite znova.' : 'Tento prehliadač nepodporuje Web Bluetooth (použite Chrome/Edge, na iPhone Bluefy).',
+      disabled: !bleOk, state: nBle ? `${nBle} pripojené` : '',
+    },
+    {
+      id: 'ant', cls: 'ant', icon: 'i-ant', title: ant.connected ? 'ANT+ – odpojiť stick' : 'ANT+ USB stick',
+      text: usbOk ? 'Garmin USB ANT stick zachytí všetky ANT+ pásy v dosahu naraz.' : 'WebUSB nie je dostupné (Chrome/Edge na PC alebo Androide).',
+      disabled: !usbOk, state: ant.connected ? 'skenuje' : '',
+    },
+    {
+      id: 'relay', cls: 'relay', icon: 'i-phone', title: 'Z mobilu',
+      text: 'PC bez Bluetooth? Pásy pripojí mobil a dáta pošle sem – chránené heslom.',
+      disabled: false, state: viewer.active ? viewerStatusText() : '',
+    },
+    {
+      id: 'demo', cls: 'demo', icon: 'i-play', title: demo.running ? 'Demo – vypnúť' : 'Demo',
+      text: 'Simulované dáta 4 športovcov – vyskúšajte bez hardvéru.',
+      disabled: false, state: demo.running ? 'beží' : '',
+    },
+  ];
+}
+
+function renderOptions(container) {
+  container.innerHTML = '';
+  for (const o of sourceOptions()) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `option ${o.cls}`;
+    b.disabled = o.disabled;
+    b.dataset.src = o.id;
+    b.innerHTML = `<span class="ico"><svg><use href="#${o.icon}"/></svg></span><b></b><small></small>`;
+    $('b', b).textContent = o.title;
+    if (o.state) {
+      const st = document.createElement('span');
+      st.className = 'state';
+      st.textContent = `● ${o.state}`;
+      $('b', b).append(st);
+    }
+    $('small', b).textContent = o.text;
+    b.addEventListener('click', () => connectSource(o.id));
+    container.append(b);
+  }
+}
+
+function viewerStatusText() {
+  return { connecting: 'pripájam…', waiting: 'čakám na mobil', online: 'online' }[viewer.status] || '';
+}
+
+function renderSources() {
+  renderOptions($('#empty-options'));
+  if ($('#connect-dialog').open) renderOptions($('#connect-options'));
+
+  const chips = $('#chips');
+  $$('.chip', chips).forEach((c) => c.remove());
+  const add = (icon, text, cls, onClick) => {
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = `chip ${cls}`;
+    c.innerHTML = `<i></i><svg><use href="#${icon}"/></svg><span></span>`;
+    $('span', c).textContent = text;
+    c.addEventListener('click', onClick);
+    chips.append(c);
+  };
+  const nBle = [...state.sensors.values()].filter((s) => s.source === 'ble' && !s.relay).length;
+  if (nBle) add('i-bt', `Bluetooth ${nBle}`, '', openConnect);
+  if (ant.connected) add('i-ant', 'ANT+ skenuje', '', openConnect);
+  if (demo.running) add('i-play', 'Demo', '', openConnect);
+  if (viewer.active) add('i-phone', `Mobil ${viewer.room} · ${viewerStatusText()}`, viewer.status === 'online' ? '' : 'wait', () => openConnect('relay'));
+  if (hub.active) {
+    const txt = hub.status === 'online' ? `Zdieľanie ${hub.room} · ${hub.viewers.size} PC` : `Zdieľanie ${hub.room} · pripájam…`;
+    add('i-share', txt, hub.status === 'online' ? '' : 'wait', openShare);
+  }
+
+  const shareBtn = $('#btn-share');
+  shareBtn.classList.toggle('on', hub.active);
+  const pill = $('#share-pill');
+  pill.hidden = !hub.active;
+  pill.textContent = hub.viewers.size;
+  updateWakeLock();
+}
+
+async function connectSource(id) {
+  if (id === 'ble') {
+    try {
+      const sid = await ble.add();
+      toast(`${sensorLabel(sid)} pripojený`);
+    } catch (err) {
+      const msg = errorMessage(err);
+      if (msg) toast(msg, true);
+    }
+  } else if (id === 'ant') {
+    try {
+      if (ant.connected) await ant.disconnect();
+      else await ant.connect();
+    } catch (err) {
+      const msg = errorMessage(err);
+      if (msg) toast(err?.name === 'SecurityError' || /claim|Access denied/i.test(msg)
+        ? 'Stick nie je možné otvoriť. Zatvorte Garmin Express / iné ANT aplikácie; na Windows nainštalujte ovládač WinUSB (Zadig).'
+        : `ANT+: ${msg}`, true);
+    }
+  } else if (id === 'relay') {
+    openConnect('relay');
+    return;
+  } else if (id === 'demo') {
+    if (demo.running) demo.stop(); else demo.start();
+    $('#connect-dialog').close();
+  }
+  renderSources();
+  render(true);
+}
+
+function openConnect(focus) {
+  const dlg = $('#connect-dialog');
+  renderOptions($('#connect-options'));
+  const showViewer = focus === 'relay' || viewer.active;
+  $('#viewer-form').hidden = !showViewer;
+  renderViewerForm();
+  if (!dlg.open) dlg.showModal();
+  if (focus === 'relay') {
+    const room = $('#v-room');
+    (room.value ? $('#v-pass') : room).focus();
+  }
+}
+
+/* ---------- viewer (PC) form ---------- */
+
+function renderViewerForm() {
+  const active = viewer.active;
+  $('#v-stop').hidden = !active;
+  $('#v-connect').textContent = active ? (viewer.status === 'online' ? 'Pripojené ✓' : 'Pripájam…') : 'Pripojiť k mobilu';
+  $('#v-connect').disabled = active;
+  $('#v-room').disabled = active;
+  $('#v-pass').disabled = active;
+  if (!$('#v-room').value) $('#v-room').value = state.viewer.room || '';
+  $('#v-remember').checked = state.viewer.remember !== false;
+  if ($('#connect-dialog').open) renderOptions($('#connect-options'));
+}
+
+function showViewerError(msg) {
+  const el = $('#v-error');
+  el.textContent = msg;
+  el.hidden = !msg;
+  if (msg) openConnect('relay');
+}
+
+async function connectViewer() {
+  const room = normalizeRoom($('#v-room').value);
+  const password = $('#v-pass').value;
+  showViewerError('');
+  if (room.length < 4) { showViewerError('Zadajte kód z mobilu'); return; }
+  if (!password) { showViewerError('Zadajte heslo'); return; }
+  const remember = $('#v-remember').checked;
+  state.viewer = { room, password: remember ? password : '', remember };
+  store.save('coach.viewer', state.viewer);
+  try {
+    await viewer.connect(room, password);
+  } catch (err) {
+    showViewerError(err.message || String(err));
+  }
+}
+
+/* ---------- share (phone) dialog ---------- */
+
+function openShare() {
+  renderShare();
+  $('#share-dialog').showModal();
+}
+
+function shareLink(room) {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('view', room);
+  const peerhost = new URLSearchParams(location.search).get('peerhost');
+  if (peerhost) url.searchParams.set('peerhost', peerhost);
+  return url.toString();
+}
+
+async function renderQr(el, text) {
+  try {
+    await loadScript('vendor/qrcode.js');
+    const qr = window.qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+  } catch {
+    el.textContent = '';
+  }
+}
+
+function renderShare() {
+  const on = hub.active;
+  $('#share-off').hidden = on;
+  $('#share-on').hidden = !on;
+  $('#s-room').value = state.share.room;
+  if (!$('#s-pass').value) $('#s-pass').value = state.share.password || '';
+  if (on) {
+    const link = shareLink(hub.room);
+    $('#s-code').textContent = hub.room;
+    $('#s-link-text').textContent = link.replace(/^https?:\/\//, '');
+    const st = $('#s-status');
+    st.className = `share-status ${hub.status === 'online' ? '' : 'wait'}`;
+    st.innerHTML = '<i></i><span></span>';
+    $('span', st).textContent = hub.status === 'online'
+      ? `Online · pripojené PC: ${hub.viewers.size}`
+      : hub.status === 'reconnecting' ? 'Spojenie so serverom stratené, obnovujem…' : 'Pripájam…';
+    const qr = $('#s-qr');
+    if (qr.dataset.link !== link) { qr.dataset.link = link; renderQr(qr, link); }
+  }
+}
+
+async function startShare() {
+  const password = $('#s-pass').value;
+  const err = $('#s-error');
+  err.hidden = true;
+  if (password.length < 4) { err.textContent = 'Heslo musí mať aspoň 4 znaky'; err.hidden = false; return; }
+  state.share.password = password;
+  state.share.active = true;
+  saveShare();
+  $('#s-start').disabled = true;
+  try {
+    await hub.start(state.share.room, password);
+    toast(`Zdieľanie spustené – kód ${state.share.room}`);
+  } catch (e) {
+    err.textContent = e.message || String(e);
+    err.hidden = false;
+    state.share.active = false;
+    saveShare();
+  }
+  $('#s-start').disabled = false;
+  renderShare();
+}
+
+async function stopShare() {
+  state.share.active = false;
+  saveShare();
+  await hub.stop();
+  renderShare();
+}
+
 /* ---------- session controls ---------- */
 
 function renderSession() {
   const s = state.session.state;
-  $('#btn-start').textContent = s === 'idle' ? '▶ Štart' : s === 'running' ? '⏸ Pauza' : '▶ Pokračovať';
-  $('#btn-start').classList.toggle('btn-primary', s !== 'running');
+  const btn = $('#btn-start');
+  btn.innerHTML = s === 'running' ? '<span>❚❚ Pauza</span>' : `<svg><use href="#i-play"/></svg><span>${s === 'idle' ? 'Štart' : 'Ďalej'}</span>`;
+  btn.className = `btn ${s === 'running' ? '' : 'btn-go'}`;
   $('#btn-lap').hidden = s === 'idle';
   $('#btn-stop').hidden = s === 'idle';
   renderSessionTime();
@@ -416,22 +780,9 @@ function renderSessionTime() {
   el.textContent = formatDuration(ms / 1000);
   el.className = `session-time ${s.state}`;
   const lapEl = $('#session-lap');
-  lapEl.hidden = !s.laps.length;
-  if (s.laps.length) {
-    const lapMs = ms - s.laps[s.laps.length - 1].elapsed;
-    lapEl.textContent = `kolo ${s.laps.length + 1} · ${formatDuration(lapMs / 1000)}`;
-  }
-}
-
-function renderAntButton() {
-  const btn = $('#btn-ant');
-  btn.classList.toggle('on', ant.connected);
-  $('#ant-label').textContent = ant.connected ? 'ANT+ skenuje' : 'ANT+ USB';
-  btn.title = ant.connected ? 'Odpojiť ANT+ stick' : 'Pripojiť Garmin USB ANT+ stick – zachytí všetky pásy v dosahu';
-  if (!ant.connected) {
-    for (const s of [...state.sensors.values()]) if (s.source === 'ant') state.sensors.delete(s.id);
-    scheduleRender();
-  }
+  if (s.state === 'idle') lapEl.textContent = 'tréning nebeží';
+  else if (!s.laps.length) lapEl.textContent = s.state === 'paused' ? 'pauza' : 'kolo 1';
+  else lapEl.textContent = `kolo ${s.laps.length + 1} · ${formatDuration((ms - s.laps[s.laps.length - 1].elapsed) / 1000)}`;
 }
 
 /* ---------- drawer ---------- */
@@ -441,12 +792,16 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 function openDrawer(key) {
   state.selected = key;
   $('#drawer').hidden = false;
+  $('#scrim').hidden = false;
+  $('#d-assign').dataset.sig = '';
+  $('#d-sensors').dataset.sig = '';
   renderDrawer(true);
 }
 
 function closeDrawer() {
   state.selected = null;
   $('#drawer').hidden = true;
+  $('#scrim').hidden = true;
 }
 
 function renderDrawer(redraw) {
@@ -457,17 +812,23 @@ function renderDrawer(redraw) {
   const now = Date.now();
   const v = liveValues(key, now);
   const zone = zoneOf(v.hr, athlete);
+  const intensity = v.hr ? intensityOf(v.hr, athlete) : null;
 
   $('#d-title').textContent = labelOf(key);
   const maxHr = maxHrOf(athlete);
   $('#d-sub').textContent = athlete
-    ? `Max. tep ${maxHr}${athlete.restHr ? ` · pokojový ${athlete.restHr} (Karvonen)` : ''}`
+    ? `Max. tep ${maxHr}${athlete.restHr ? ` · pokojový ${athlete.restHr} (Karvonen)` : ''}${athlete.remote ? ' · profil z mobilu' : ''}`
     : `Nepriradený senzor · zóny z max. tepu ${maxHr}`;
   $('#d-hr').textContent = v.hr ?? '–';
+  setHeart($('#d-heart'), v.hr);
+  $('#d-heart').style.color = zoneColor(zone);
   const dz = $('#d-zone');
-  dz.textContent = zone ? ZONES[zone - 1].name : '';
+  dz.textContent = zone ? `${ZONES[zone - 1].name} · ${Math.round(intensity * 100)} %` : '';
   dz.hidden = !zone;
   dz.style.background = zoneColor(zone);
+  const ibar = $('#d-ibar');
+  if (!ibar.children.length) ibar.innerHTML = ZONES.map((z) => `<i style="background:${z.color}"></i>`).join('') + '<b hidden></b>';
+  intensityBar(ibar, intensity);
 
   if (redraw && p) {
     drawHrChart($('#d-chart'), p.live, athlete, state.detailWindow, { muted: css('--muted'), grid: css('--line') });
@@ -475,9 +836,10 @@ function renderDrawer(redraw) {
 
   const ss = p?.sess;
   const recentRr = p && now - p.rrAt < STALE_MS ? p.rr.slice(-60) : [];
+  const hrv = rmssd(recentRr);
   const stats = [
-    ['Intenzita', v.hr ? `${Math.round(intensityOf(v.hr, athlete) * 100)} %` : '–'],
-    ['HRV (RMSSD)', rmssd(recentRr) != null ? `${rmssd(recentRr)} ms` : '–'],
+    ['Intenzita', intensity != null ? `${Math.round(intensity * 100)} %` : '–'],
+    ['HRV (RMSSD)', hrv != null ? `${hrv} ms` : '–'],
     ['Posl. RR', recentRr.length ? `${recentRr[recentRr.length - 1]} ms` : '–'],
     ['Ø tep', ss?.hrN ? Math.round(ss.hrSum / ss.hrN) : '–'],
     ['Max tep', ss?.max || '–'],
@@ -511,20 +873,20 @@ function renderDrawer(redraw) {
     for (const s of sensors) {
       const li = document.createElement('li');
       const details = [
-        SOURCE_LABEL[s.source],
+        SOURCE_LABEL[s.source] + (s.relay ? ' cez mobil' : ''),
         s.manufacturer,
         s.model,
         s.battery != null ? `batéria ${s.battery} %${s.batteryStatus ? ` (${s.batteryStatus})` : ''}` : null,
         s.rssi != null ? `signál ${s.rssi} dBm` : null,
         s.status !== 'connected' ? s.status : null,
       ].filter(Boolean).join(' · ');
-      li.innerHTML = `<div class="grow"><b></b><small></small></div>`;
+      li.innerHTML = '<div class="grow"><b></b><small></small></div>';
       $('b', li).textContent = s.name;
       $('small', li).textContent = details;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn';
-      btn.textContent = s.source === 'ble' ? 'Odpojiť' : 'Skryť';
+      btn.textContent = s.source === 'ble' && !s.relay ? 'Odpojiť' : 'Skryť';
       btn.addEventListener('click', () => removeSensor(s.id));
       li.append(btn);
       list.append(li);
@@ -537,11 +899,15 @@ function renderDrawer(redraw) {
   const selSig = `${key}|${state.athletes.map((a) => `${a.id}:${a.name}`).join(',')}`;
   if (sel.dataset.sig !== selSig) {
     sel.dataset.sig = selSig;
-    sel.innerHTML = '<option value="">— nepriradený —</option>'
-      + state.athletes.map((a) => `<option value="${a.id}"></option>`).join('')
-      + '<option value="__new">+ Nový športovec…</option>';
-    state.athletes.forEach((a, i) => { sel.options[i + 1].textContent = a.name || 'Bez mena'; });
-    sel.value = athlete ? athlete.id : '';
+    sel.innerHTML = `<option value="">${athlete?.remote ? `${athlete.name} (z mobilu)` : '— nepriradený —'}</option>`;
+    for (const a of state.athletes) {
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = a.name || 'Bez mena';
+      sel.append(o);
+    }
+    sel.insertAdjacentHTML('beforeend', '<option value="__new">+ Nový športovec…</option>');
+    sel.value = athlete && !athlete.remote ? athlete.id : '';
     sel.disabled = !sensors.length;
   }
 }
@@ -549,7 +915,7 @@ function renderDrawer(redraw) {
 function removeSensor(id) {
   const s = state.sensors.get(id);
   if (!s) return;
-  if (s.source === 'ble') ble.disconnect(id);
+  if (s.source === 'ble' && !s.relay) ble.disconnect(id);
   else { state.hidden.add(id); toast(`${s.name} skrytý`); }
   scheduleRender();
 }
@@ -562,8 +928,8 @@ function assignSelected(value) {
   let athleteId = value;
   if (value === '__new') {
     const name = prompt('Meno športovca:');
-    if (!name) { renderDrawerAssignReset(); return; }
-    const a = { id: crypto.randomUUID().slice(0, 8), name: name.trim(), sensorIds: [] };
+    if (!name) { $('#d-assign').dataset.sig = ''; renderDrawer(false); return; }
+    const a = { id: crypto.randomUUID().slice(0, 8), name: name.trim(), sex: 'm', sensorIds: [] };
     state.athletes.push(a);
     athleteId = a.id;
   }
@@ -586,11 +952,6 @@ function assignSelected(value) {
   render(true);
 }
 
-function renderDrawerAssignReset() {
-  $('#d-assign').dataset.sig = '';
-  renderDrawer(false);
-}
-
 /* ---------- athletes dialog ---------- */
 
 function renderAthletes() {
@@ -609,7 +970,7 @@ function renderAthletes() {
       <td><input type="number" data-f="maxHr" min="100" max="240" placeholder="${maxHrOf(a)}"></td>
       <td><input type="number" data-f="restHr" min="30" max="100" placeholder="–"></td>
       <td class="sensors-cell"></td>
-      <td><button type="button" class="btn btn-icon btn-ghost" title="Zmazať">🗑</button></td>`;
+      <td><button type="button" class="btn btn-icon btn-ghost del" title="Zmazať">🗑</button></td>`;
     for (const input of tr.querySelectorAll('[data-f]')) {
       const f = input.dataset.f;
       input.value = a[f] ?? (f === 'sex' ? 'm' : '');
@@ -625,11 +986,9 @@ function renderAthletes() {
     for (const id of a.sensorIds || []) {
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'btn';
+      chip.className = 'sensor-chip';
       chip.title = 'Odobrať senzor';
-      chip.textContent = `${sensorLabel(id)} ✕`;
-      chip.style.minHeight = '30px';
-      chip.style.marginRight = '4px';
+      chip.textContent = `${sensorLabel(id)}${id.startsWith(RELAY_PREFIX) ? ' (mobil)' : ''} ✕`;
       chip.addEventListener('click', () => {
         a.sensorIds = a.sensorIds.filter((x) => x !== id);
         saveAthletes(); renderAthletes(); render(true);
@@ -642,7 +1001,7 @@ function renderAthletes() {
       for (const s of free) {
         const o = document.createElement('option');
         o.value = s.id;
-        o.textContent = s.name;
+        o.textContent = s.name + (s.relay ? ' (mobil)' : '');
         sel.append(o);
       }
       sel.addEventListener('change', () => {
@@ -653,7 +1012,7 @@ function renderAthletes() {
       cell.append(sel);
     }
     if (!cell.children.length) cell.innerHTML = '<span class="muted">—</span>';
-    tr.querySelector('button[title="Zmazať"]').addEventListener('click', () => {
+    $('.del', tr).addEventListener('click', () => {
       if (!confirm(`Zmazať športovca ${a.name || ''}?`)) return;
       state.athletes = state.athletes.filter((x) => x !== a);
       saveAthletes(); renderAthletes(); render(true);
@@ -662,6 +1021,13 @@ function renderAthletes() {
   }
   if (!state.athletes.length) {
     body.innerHTML = '<tr><td colspan="8" class="muted">Zatiaľ žiadni športovci. Pridajte ich tu alebo kliknite na dlaždicu senzora a zvoľte „Nový športovec“.</td></tr>';
+  }
+
+  const remote = $('#remote-athletes');
+  remote.innerHTML = '';
+  if (state.remoteAthletes.length) {
+    remote.innerHTML = '<div class="remote-list"><h3>Z mobilu (len na čítanie)</h3><p class="muted"></p></div>';
+    $('p', remote).textContent = state.remoteAthletes.map((a) => a.name || 'Bez mena').join(', ');
   }
 }
 
@@ -745,7 +1111,7 @@ function beep() {
 
 let wakeLock = null;
 async function updateWakeLock() {
-  const want = state.sensors.size > 0 || state.session.state !== 'idle';
+  const want = state.sensors.size > 0 || state.session.state !== 'idle' || hub.active || viewer.active;
   if (!('wakeLock' in navigator)) return;
   try {
     if (want && !wakeLock && document.visibilityState === 'visible') {
@@ -765,70 +1131,95 @@ function errorMessage(err) {
   return err?.message || String(err);
 }
 
+function applyTheme() {
+  const t = state.options.theme;
+  if (t === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+}
+
+function bindSeg(el, get, set) {
+  const sync = () => $$('button', el).forEach((b) => b.classList.toggle('active', b.dataset.v === get()));
+  $$('button', el).forEach((b) => b.addEventListener('click', () => { set(b.dataset.v); sync(); }));
+  sync();
+}
+
 /* ------------------------------------------------------------------ */
 /* wiring                                                               */
 /* ------------------------------------------------------------------ */
 
 function init() {
-  const bleOk = BleManager.isSupported();
-  const usbOk = AntManager.isSupported();
   const banner = $('#banner');
   if (!window.isSecureContext) {
     banner.hidden = false;
-    banner.textContent = 'Bluetooth a USB fungujú iba cez HTTPS alebo localhost.';
-  } else if (!bleOk && !usbOk) {
+    banner.textContent = 'Bluetooth, USB a zdieľanie fungujú iba cez HTTPS alebo localhost.';
+  } else if (!BleManager.isSupported() && !AntManager.isSupported()) {
     banner.hidden = false;
-    banner.innerHTML = 'Tento prehliadač nepodporuje Web Bluetooth ani WebUSB. Použite <b>Chrome</b> alebo <b>Edge</b> (Windows, macOS, Linux, Android), na iPhone/iPade aplikáciu <b>Bluefy</b>. <b>Demo</b> funguje všade.';
+    banner.innerHTML = 'Tento prehliadač nevie pripojiť pásy priamo. Použite <b>Chrome</b> alebo <b>Edge</b>, na iPhone aplikáciu <b>Bluefy</b> – alebo zvoľte <b>Pripojiť → Z mobilu</b> a dáta pošle mobil.';
   }
-  $('#btn-ble').disabled = !bleOk;
-  if (!bleOk) $('#btn-ble').title = 'Web Bluetooth nie je v tomto prehliadači dostupný';
-  $('#btn-ant').disabled = !usbOk;
-  if (!usbOk) $('#btn-ant').title = 'WebUSB nie je v tomto prehliadači dostupné (Chrome/Edge na počítači alebo Androide)';
+  $('#site-host').textContent = location.host || 'atherion.cz';
 
-  $('#btn-ble').addEventListener('click', async () => {
-    try {
-      const id = await ble.add();
-      toast(`${sensorLabel(id)} pripojený`);
-    } catch (err) {
-      const msg = errorMessage(err);
-      if (msg) toast(msg, true);
-    }
-    updateWakeLock();
-  });
-
-  $('#btn-ant').addEventListener('click', async () => {
-    try {
-      if (ant.connected) await ant.disconnect();
-      else await ant.connect();
-    } catch (err) {
-      const msg = errorMessage(err);
-      if (msg) toast(err?.name === 'SecurityError' || /claim|Access denied/i.test(msg)
-        ? 'Stick nie je možné otvoriť. Zatvorte Garmin Express / iné ANT aplikácie; na Windows nainštalujte ovládač WinUSB (Zadig).'
-        : `ANT+: ${msg}`, true);
-    }
-    renderAntButton();
-    updateWakeLock();
-  });
-
-  $('#btn-demo').addEventListener('click', () => {
-    if (demo.running) demo.stop(); else demo.start();
-    render(true);
-    updateWakeLock();
-  });
-
+  $('#btn-connect').addEventListener('click', () => openConnect());
+  $('#btn-share').addEventListener('click', openShare);
   $('#btn-start').addEventListener('click', startOrPause);
   $('#btn-lap').addEventListener('click', lap);
   $('#btn-stop').addEventListener('click', stop);
 
+  // viewer form
+  $('#v-connect').addEventListener('click', connectViewer);
+  $('#v-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectViewer(); } });
+  $('#v-room').addEventListener('input', (e) => { e.target.value = normalizeRoom(e.target.value); });
+  $('#v-stop').addEventListener('click', () => {
+    viewer.stop();
+    state.viewer.password = '';
+    store.save('coach.viewer', state.viewer);
+    $('#v-pass').value = '';
+    renderViewerForm();
+  });
+
+  // share dialog
+  $('#s-newroom').addEventListener('click', () => { state.share.room = randomRoom(); saveShare(); renderShare(); });
+  $('#s-show').addEventListener('change', (e) => { $('#s-pass').type = e.target.checked ? 'text' : 'password'; });
+  $('#s-start').addEventListener('click', startShare);
+  $('#s-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); startShare(); } });
+  $('#s-stop').addEventListener('click', stopShare);
+  $('#s-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(shareLink(hub.room)); toast('Odkaz skopírovaný'); }
+    catch { toast(shareLink(hub.room)); }
+  });
+
+  // athletes
   $('#btn-athletes').addEventListener('click', () => { renderAthletes(); $('#athletes-dialog').showModal(); });
   $('#btn-add-athlete').addEventListener('click', () => {
     state.athletes.push({ id: crypto.randomUUID().slice(0, 8), name: '', sex: 'm', sensorIds: [] });
     saveAthletes();
     renderAthletes();
-    const inputs = document.querySelectorAll('#athletes-body input.name');
+    const inputs = $$('#athletes-body input.name');
     inputs[inputs.length - 1]?.focus();
   });
   $('#athletes-dialog').addEventListener('close', () => { $('#d-assign').dataset.sig = ''; render(true); });
+
+  // settings
+  $('#btn-settings').addEventListener('click', () => $('#settings-dialog').showModal());
+  const oAlert = $('#o-alert');
+  oAlert.value = String(state.options.alert);
+  oAlert.addEventListener('change', () => { state.options.alert = Number(oAlert.value); saveOptions(); render(false); });
+  const oSound = $('#o-sound');
+  oSound.checked = state.options.sound;
+  oSound.addEventListener('change', () => { state.options.sound = oSound.checked; saveOptions(); if (oSound.checked) beep(); });
+  const oOnly = $('#o-only');
+  oOnly.checked = state.options.onlyAssigned;
+  oOnly.addEventListener('change', () => { state.options.onlyAssigned = oOnly.checked; saveOptions(); render(true); });
+  const oTheme = $('#o-theme');
+  oTheme.value = state.options.theme;
+  oTheme.addEventListener('change', () => { state.options.theme = oTheme.value; saveOptions(); applyTheme(); render(true); });
+
+  bindSeg($('#sort-seg'), () => state.options.sort, (v) => { state.options.sort = v; saveOptions(); render(true); });
+  bindSeg($('#size-seg'), () => state.options.size, (v) => {
+    state.options.size = v; saveOptions();
+    grid.className = `grid size-${v}`;
+    render(true);
+  });
+  grid.className = `grid size-${state.options.size}`;
 
   $('#btn-fullscreen').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -836,34 +1227,25 @@ function init() {
   });
 
   $('#d-close').addEventListener('click', closeDrawer);
+  $('#scrim').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.selected) closeDrawer(); });
   $('#d-assign').addEventListener('change', (e) => assignSelected(e.target.value));
-  for (const b of document.querySelectorAll('#d-window button')) {
+  for (const b of $$('#d-window button')) {
     b.addEventListener('click', () => {
       state.detailWindow = Number(b.dataset.w);
-      for (const x of document.querySelectorAll('#d-window button')) x.classList.toggle('active', x === b);
+      for (const x of $$('#d-window button')) x.classList.toggle('active', x === b);
       renderDrawer(true);
     });
   }
 
-  const sort = $('#sort');
-  sort.value = state.options.sort;
-  sort.addEventListener('change', () => { state.options.sort = sort.value; saveOptions(); render(true); });
-  const only = $('#only-assigned');
-  only.checked = state.options.onlyAssigned;
-  only.addEventListener('change', () => { state.options.onlyAssigned = only.checked; saveOptions(); render(true); });
-  const sound = $('#sound');
-  sound.checked = state.options.sound;
-  sound.addEventListener('change', () => { state.options.sound = sound.checked; saveOptions(); if (sound.checked) beep(); });
-
   document.addEventListener('visibilitychange', updateWakeLock);
   window.addEventListener('beforeunload', (e) => {
-    if (state.session.state !== 'idle') { e.preventDefault(); e.returnValue = ''; }
+    if (state.session.state !== 'idle' || hub.viewers.size) { e.preventDefault(); e.returnValue = ''; }
   });
   window.addEventListener('resize', () => render(true));
 
   // Re-open an ANT+ stick the user already allowed earlier.
-  if (usbOk) ant.restoreKnown().then((ok) => { if (ok) renderAntButton(); }).catch(() => {});
+  if (AntManager.isSupported()) ant.restoreKnown().then((ok) => { if (ok) renderSources(); }).catch(() => {});
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -872,7 +1254,26 @@ function init() {
   const params = new URLSearchParams(location.search);
   if (params.has('demo')) demo.start();
 
+  // Resume sharing after a reload of the phone.
+  if (state.share.active && state.share.password) {
+    hub.start(state.share.room, state.share.password).catch((e) => toast(e.message, true));
+  }
+
+  // PC opened via the QR code / link: ?view=ROOM
+  const viewRoom = normalizeRoom(params.get('view'));
+  if (viewRoom) {
+    if (viewRoom !== state.viewer.room) state.viewer = { ...state.viewer, room: viewRoom, password: '' };
+    $('#v-room').value = viewRoom;
+  }
+  if (state.viewer.room && state.viewer.password) {
+    $('#v-room').value = state.viewer.room;
+    viewer.connect(state.viewer.room, state.viewer.password).catch((e) => showViewerError(e.message));
+  } else if (viewRoom) {
+    openConnect('relay');
+  }
+
   renderSession();
+  renderSources();
   render(true);
   setInterval(tick, 1000);
 }
