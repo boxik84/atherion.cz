@@ -1,7 +1,7 @@
 # Atherion Coach – live tep pre trénerov
 
 Webová aplikácia, v ktorej tréner vidí **live tep celej skupiny** na jednej obrazovke.
-Funguje s Garmin HRM pásmi, Garmin hodinkami aj s inými pásmi cez **Bluetooth** alebo **ANT+**.
+Funguje s Garmin HRM pásmi (HRM 600, HRM-Pro, HRM-Pro Plus, HRM-Dual, HRM-Fit, HRM 200), Garmin hodinkami aj s inými pásmi cez **Bluetooth** alebo **ANT+**.
 Nič sa neinštaluje a nie je potrebný server: stačí otvoriť stránku v Chrome alebo Edge.
 
 ## Čo aplikácia vie
@@ -23,7 +23,7 @@ Nič sa neinštaluje a nie je potrebný server: stačí otvoriť stránku v Chro
 
 | Spôsob | Čo treba | Poznámka |
 |---|---|---|
-| **Bluetooth** | Chrome/Edge na Windows, macOS, Linuxe alebo Androide; na iOS aplikácia **Bluefy** | Každý pás sa pridáva cez tlačidlo *Bluetooth*. Garmin HRM-Pro/Dual zvládne 2 BLE spojenia naraz, takže hodinky športovca môžu ostať pripojené. |
+| **Bluetooth** | Chrome/Edge na Windows, macOS, Linuxe alebo Androide; na iOS aplikácia **Bluefy** | Každý pás sa pridáva cez tlačidlo *Bluetooth*. HRM 600 zvládne 3 BLE spojenia naraz, HRM-Pro/Dual 2, takže hodinky športovca môžu ostať pripojené. |
 | **ANT+ USB stick** | Garmin USB ANT Stick / ANT USB-m / USB2, Chrome/Edge (WebUSB) | Stick beží v *scan* režime a zachytí **všetky** ANT+ pásy, foot pody a wattmetre v dosahu naraz, bez párovania. Najlepšia voľba pre skupinu. |
 | **Garmin hodinky** | Na hodinkách zapnúť *Vysielanie srdcového tepu* | Hodinky sa potom správajú ako pás, cez BLE aj ANT+. |
 

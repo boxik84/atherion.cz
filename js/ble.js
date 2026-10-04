@@ -1,5 +1,5 @@
 // Bluetooth LE sensors via Web Bluetooth (Chrome / Edge / Android, Bluefy on iOS).
-// Works with Garmin HRM-Pro / HRM-Pro Plus / HRM-Dual / HRM-Fit / HRM 200,
+// Works with Garmin HRM 600 / HRM-Pro / HRM-Pro Plus / HRM-Dual / HRM-Fit / HRM 200,
 // Garmin watches in "Broadcast heart rate" mode and any standard BLE HR strap.
 
 import {
