@@ -1,0 +1,10 @@
+{
+  "name": "atherion-coach",
+  "private": true,
+  "type": "module",
+  "description": "Live heart rate dashboard for coaches – Garmin HRM via Bluetooth and ANT+",
+  "scripts": {
+    "start": "npx http-server -c-1 -p 8080 .",
+    "test": "node --test tests/*.test.js"
+  }
+}
