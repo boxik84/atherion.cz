@@ -40,12 +40,29 @@ async function PeerClass() {
   return window.peerjs.Peer;
 }
 
+// STUN finds the public address of each side; TURN relays the (still encrypted)
+// traffic when the networks don't allow a direct connection, e.g. mobile data.
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  {
+    urls: [
+      'turn:eu-0.turn.peerjs.com:3478',
+      'turn:us-0.turn.peerjs.com:3478',
+      'turn:eu-0.turn.peerjs.com:3478?transport=tcp',
+    ],
+    username: 'peerjs',
+    credential: 'peerjsp',
+  },
+];
+
 /** Optional self-hosted signalling server: ?peerhost=host:port (used for local testing). */
 function peerOptions() {
+  const base = { debug: 0, config: { iceServers: ICE_SERVERS } };
   const host = new URLSearchParams(location.search).get('peerhost');
-  if (!host) return { debug: 0 };
+  if (!host) return base;
   const [h, p] = host.split(':');
-  return { host: h, port: Number(p || 9000), path: '/', secure: location.protocol === 'https:', debug: 0 };
+  return { ...base, host: h, port: Number(p || 9000), path: '/', secure: location.protocol === 'https:' };
 }
 
 export function randomRoom(len = 6) {
@@ -235,6 +252,9 @@ export class RelayHub {
 
 export class RelayViewer {
   /**
+   * Status flow: connecting (signalling server) → dialing (looking for the phone)
+   * → auth (password check) → online. On trouble: waiting (phone not sharing)
+   * or failed (no direct path between the devices); both keep retrying.
    * @param {{onUpdate:(u:object)=>void, onAthletes:(list:object[])=>void, onChange:(info:object)=>void}} opts
    */
   constructor(opts) {
@@ -245,13 +265,14 @@ export class RelayViewer {
     this.key = null;
     this.status = 'off';
     this.retryTimer = null;
+    this.failures = 0;
   }
 
   get active() { return this.status !== 'off'; }
 
   #set(status, extra = {}) {
     this.status = status;
-    this.opts.onChange({ status, room: this.room, ...extra });
+    this.opts.onChange({ status, room: this.room, failures: this.failures, ...extra });
   }
 
   async connect(room, password) {
@@ -259,19 +280,31 @@ export class RelayViewer {
     this.room = normalizeRoom(room);
     this.key = await deriveKey(password, this.room);
     const Peer = await PeerClass();
+    this.failures = 0;
     this.#set('connecting');
     await new Promise((resolve, reject) => {
       const peer = new Peer(peerOptions());
       this.peer = peer;
-      peer.on('open', () => { resolve(); this.#dial(); });
+      const timer = setTimeout(() => {
+        if (this.peer !== peer || peer.open) return;
+        this.stop();
+        reject(new Error('Nepodarilo sa spojiť so serverom 0.peerjs.com. Skontrolujte internet, prípadne či sieť (firma/škola) neblokuje WebRTC.'));
+      }, 15000);
+      peer.on('open', () => {
+        clearTimeout(timer);
+        resolve();
+        if (!this.conn && this.status === 'connecting') this.#dial();
+      });
       peer.on('error', (err) => {
         if (this.peer !== peer) return;
         if (err.type === 'peer-unavailable') {
+          this.#drop();
           this.#set('waiting');
-          this.#retry();
-        } else if (this.status === 'connecting' && !this.conn) {
-          reject(new Error(`Pripojenie zlyhalo (${err.type})`));
+          this.#retry(3000);
+        } else if (!peer.open && this.status === 'connecting') {
+          clearTimeout(timer);
           this.stop();
+          reject(new Error(`Pripojenie k serveru zlyhalo (${err.type})`));
         }
       });
       peer.on('disconnected', () => {
@@ -280,18 +313,49 @@ export class RelayViewer {
     });
   }
 
-  #retry(ms = 3000) {
+  #retry(ms) {
     clearTimeout(this.retryTimer);
-    this.retryTimer = setTimeout(() => { if (this.peer && !this.peer.destroyed) this.#dial(); }, ms);
+    this.retryTimer = setTimeout(() => {
+      if (this.peer && !this.peer.destroyed && !this.conn) this.#dial();
+    }, ms);
+  }
+
+  /** Forget the current data connection (PeerJS emits no 'close' for one that never opened). */
+  #drop() {
+    const conn = this.conn;
+    this.conn = null;
+    if (conn) { try { conn.close(); } catch { /* ignore */ } }
   }
 
   #dial() {
-    if (this.conn) { try { this.conn.close(); } catch { /* ignore */ } }
+    this.#drop();
+    if (!this.peer || this.peer.destroyed) return;
     const conn = this.peer.connect(PEER_PREFIX + this.room, { reliable: true, serialization: 'json' });
     this.conn = conn;
+    this.#set('dialing');
+    let opened = false;
     let welcomed = false;
     let myNonce = null;
-    const openTimer = setTimeout(() => { if (!welcomed && this.conn === conn) { conn.close(); } }, AUTH_TIMEOUT_MS + 2000);
+
+    const fail = (reason) => {
+      if (this.conn !== conn || welcomed) return;
+      clearTimeout(timer);
+      this.#drop();
+      this.failures++;
+      this.#set('failed', { reason });
+      this.#retry(Math.min(30000, 3000 * this.failures));
+    };
+    // ICE through strict NATs can take a while, but not this long.
+    const timer = setTimeout(() => fail(opened ? 'auth' : 'ice'), 20000);
+
+    conn.on('open', () => {
+      if (this.conn !== conn) return;
+      opened = true;
+      this.#set('auth');
+    });
+    conn.on('iceStateChanged', (state) => {
+      if (state === 'failed' && !opened) fail('ice');
+    });
 
     conn.on('data', async (msg) => {
       if (this.conn !== conn || !msg || typeof msg !== 'object') return;
@@ -300,13 +364,13 @@ export class RelayViewer {
         conn.send({ t: 'auth', mac: await sign(this.key, 'viewer', msg.nonce), nonce: myNonce });
       } else if (msg.t === 'welcome') {
         if (!msg.mac || !(await verify(this.key, 'hub', myNonce, msg.mac))) {
-          conn.close();
           this.stop();
           this.#set('off', { error: 'Mobil sa nepreukázal správnym heslom' });
           return;
         }
         welcomed = true;
-        clearTimeout(openTimer);
+        clearTimeout(timer);
+        this.failures = 0;
         this.#set('online');
         this.opts.onAthletes(msg.athletes || []);
         for (const u of msg.sensors || []) this.opts.onUpdate(u);
@@ -328,10 +392,11 @@ export class RelayViewer {
     });
 
     conn.on('close', () => {
-      clearTimeout(openTimer);
+      clearTimeout(timer);
       if (this.conn !== conn || this.status === 'off') return;
+      this.conn = null;
       this.#set('waiting');
-      this.#retry();
+      this.#retry(3000);
     });
     conn.on('error', () => {});
   }

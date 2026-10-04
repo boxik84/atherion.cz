@@ -565,8 +565,17 @@ function renderOptions(container) {
   }
 }
 
+const VIEWER_STATUS = {
+  connecting: ['pripájam sa…', 'Pripájam sa na server, cez ktorý sa PC nájde s mobilom.'],
+  dialing: ['hľadám mobil…', 'Server našiel mobil, nadväzujem priame spojenie.'],
+  auth: ['overujem heslo…', 'Spojenie s mobilom je nadviazané, overujem heslo.'],
+  online: ['online', 'Dáta z mobilu prichádzajú.'],
+  waiting: ['čakám na mobil', 'Mobil s týmto kódom práve nezdieľa. Je na ňom otvorená stránka a zapnuté Zdieľať? Skúšam znova…'],
+  failed: ['zlyhalo, skúšam znova', 'Mobil aj PC sú online, ale sieť nepustila priame spojenie. Pomôže dať mobil aj PC na rovnakú Wi-Fi alebo vypnúť VPN. Skúšam znova…'],
+};
+
 function viewerStatusText() {
-  return { connecting: 'pripájam…', waiting: 'čakám na mobil', online: 'online' }[viewer.status] || '';
+  return VIEWER_STATUS[viewer.status]?.[0] || '';
 }
 
 function renderSources() {
@@ -651,10 +660,22 @@ function renderViewerForm() {
   const active = viewer.active;
   $('#v-stop').hidden = !active;
   $('#v-connect').textContent = active ? (viewer.status === 'online' ? 'Pripojené ✓' : 'Pripájam…') : 'Pripojiť k mobilu';
+  $('#v-stop').textContent = viewer.status === 'online' ? 'Odpojiť od mobilu' : 'Zrušiť';
   $('#v-connect').disabled = active;
   $('#v-room').disabled = active;
   $('#v-pass').disabled = active;
   if (!$('#v-room').value) $('#v-room').value = state.viewer.room || '';
+  const st = $('#v-status');
+  const info = VIEWER_STATUS[viewer.status];
+  st.hidden = !info;
+  if (info) {
+    st.className = `conn-status ${viewer.status === 'online' ? 'ok' : viewer.status === 'failed' ? 'bad' : ''}`;
+    const title = viewer.status === 'failed' ? 'Spojenie zlyhalo' : info[0];
+    $('b', st).textContent = title[0].toUpperCase() + title.slice(1);
+    $('small', st).textContent = viewer.status === 'failed' && viewer.failures > 1
+      ? `${info[1]} (pokus ${viewer.failures})`
+      : info[1];
+  }
   $('#v-remember').checked = state.viewer.remember !== false;
   if ($('#connect-dialog').open) renderOptions($('#connect-options'));
 }
